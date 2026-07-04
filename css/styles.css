@@ -306,6 +306,16 @@ button:disabled { opacity: 0.4; cursor: default; }
   color: #e8e3da;
 }
 .para { margin: 0 0 1.1em; color: inherit; }
+.para-heading {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0.9em 0 0.7em;
+}
+.para-heading:first-child { margin-top: 0; }
 
 .s {
   cursor: pointer;

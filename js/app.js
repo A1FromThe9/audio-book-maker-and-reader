@@ -178,10 +178,11 @@ async function renderReader(id) {
   const flat = [];
   const sentenceEls = [];
   const paraStartFlatIndex = new Array(paragraphs.length);
+  const headingParaIndexes = new Set((meta.chapters || []).map((c) => c.paraIndex));
   const content = el('article', { class: 'book-text' });
   paragraphs.forEach((para, paraIdx) => {
     paraStartFlatIndex[paraIdx] = flat.length;
-    const p = el('p', { class: 'para' });
+    const p = el('p', { class: headingParaIndexes.has(paraIdx) ? 'para para-heading' : 'para' });
     for (const s of para) {
       const idx = flat.length;
       const span = el('span', { class: 's', dataset: { i: idx } }, s);
