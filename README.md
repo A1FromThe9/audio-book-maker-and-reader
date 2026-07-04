@@ -6,6 +6,7 @@ Turn any PDF into a read-along audiobook — installable as a home-screen app on
 - **Listen** with your device's built-in text-to-speech voices
 - **Follow along**: the current sentence is highlighted and the page auto-scrolls in sync with the audio (word-level highlighting too, where the platform supports it)
 - **Tap any sentence** to jump the audio there
+- **Chapters**: when a PDF has them, jump straight to any chapter and see which one you're currently in
 - **Speed & voice controls** (0.75×–2×), voice list limited to real English narration voices — novelty voices (Jester, Zarvox, etc.) and old low-fidelity ones are filtered out
 - **Time remaining** for the rest of the book, updating live as you read and adjusting to your chosen speed
 - **Library with resume**: books and your reading position are saved on your device, so you always pick up where you left off
@@ -28,6 +29,7 @@ Then open `http://localhost:8000` in your browser.
 ## How it works
 
 - [pdf.js](https://mozilla.github.io/pdf.js/) (vendored in `vendor/pdfjs/`) parses the PDF in the browser. Lines are reconstructed into paragraphs, repeated headers/footers and page numbers are stripped, hyphenated line-break words are re-joined, and the text is split into sentences.
+- Chapters are read from the PDF's embedded bookmarks when present; otherwise they're detected from heading-sized text (short lines in a noticeably larger font than the surrounding body text). Books with fewer than two detected chapters just don't show a chapters button.
 - Playback uses the Web Speech API with **one utterance per sentence** — that's what keeps the highlighted text reliably in sync with the audio (and avoids Chrome's long-utterance cutoff bug).
 - Books, extracted text, and reading positions live in IndexedDB; the app itself is cached by a service worker so everything works offline.
 

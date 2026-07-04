@@ -1,6 +1,9 @@
 // PDF → structured text. Runs entirely in the browser via pdf.js.
-// Output: { title, paragraphs } where paragraphs is an array of arrays of
-// sentence strings — the unit the speech engine and reader operate on.
+// Output: { title, paragraphs, chapters } where paragraphs is an array of
+// arrays of sentence strings — the unit the speech engine and reader operate
+// on — and chapters is [{ title, paraIndex }], resolved from the PDF's
+// embedded bookmarks when present, or detected from heading-sized text
+// otherwise. chapters is [] when nothing reliable was found.
 
 import * as pdfjs from '../vendor/pdfjs/pdf.min.mjs';
 
@@ -37,17 +40,22 @@ export async function extractPdf(file, onProgress) {
   } catch {
     // metadata is optional
   }
+  const outlineEntries = await resolveOutline(doc);
   await doc.destroy();
   title = title.trim() || file.name.replace(/\.pdf$/i, '').replace(/[-_]+/g, ' ').trim() || 'Untitled';
 
   stripFurniture(pages);
-  const paragraphs = buildParagraphs(pages);
+  const { paragraphs, meta } = buildParagraphs(pages);
 
   const totalChars = paragraphs.flat().join('').length;
   if (totalChars < 200) {
     throw new ExtractError('no-text', 'No extractable text found in this PDF');
   }
-  return { title, paragraphs };
+
+  let chapters = mapOutlineToParagraphs(outlineEntries, meta.map((m) => m.page));
+  if (!chapters.length) chapters = detectHeadingChapters(paragraphs, meta);
+
+  return { title, paragraphs, chapters };
 }
 
 // Group pdf.js text items into visual lines (top-to-bottom, left-to-right).
@@ -118,21 +126,30 @@ function stripFurniture(pages) {
 }
 
 // Merge lines into paragraphs using vertical gaps, indentation, and font-size
-// changes; re-join words hyphenated across line breaks; then split into sentences.
+// changes; re-join words hyphenated across line breaks; then split into
+// sentences. Also tracks, per paragraph, the font height that started it and
+// the PDF page it began on — used for chapter-heading detection and for
+// mapping the PDF's embedded outline (bookmarks) to a paragraph index.
 function buildParagraphs(pages) {
   const paras = [];
+  const rawMeta = [];
   let cur = null;
+  let curHeight = 0;
+  let curPage = 0;
   const flush = () => {
     if (cur) {
       const text = cur.replace(/\s+/g, ' ').trim();
-      if (text) paras.push(text);
+      if (text) {
+        paras.push(text);
+        rawMeta.push({ height: curHeight, page: curPage });
+      }
     }
     cur = null;
   };
 
-  for (const lines of pages) {
+  pages.forEach((lines, pageIdx) => {
     const kept = lines.filter((l) => !l.drop);
-    if (!kept.length) continue;
+    if (!kept.length) return;
 
     const gaps = [];
     for (let i = 1; i < kept.length; i++) gaps.push(Math.abs(kept[i - 1].y - kept[i].y));
@@ -158,16 +175,112 @@ function buildParagraphs(pages) {
       if (breakPara) {
         flush();
         cur = ln.text;
+        curHeight = ln.h;
+        curPage = pageIdx;
       } else if (/[A-Za-z]-$/.test(cur) && /^[a-z]/.test(ln.text)) {
         cur = cur.slice(0, -1) + ln.text;
       } else {
         cur += ' ' + ln.text;
       }
     }
-  }
+  });
   flush();
 
-  return paras.map(splitSentences).filter((p) => p.length);
+  const paragraphs = [];
+  const meta = [];
+  for (let i = 0; i < paras.length; i++) {
+    const sentences = splitSentences(paras[i]);
+    if (sentences.length) {
+      paragraphs.push(sentences);
+      meta.push(rawMeta[i]);
+    }
+  }
+  return { paragraphs, meta };
+}
+
+// Heading-based chapter fallback for PDFs without a usable embedded outline:
+// a paragraph is a heading candidate when its font is meaningfully bigger
+// than the document's typical body text and it's short (a title, not prose).
+function detectHeadingChapters(paragraphs, meta) {
+  if (paragraphs.length < 4) return [];
+  const heights = meta.map((m) => m.height).slice().sort((a, b) => a - b);
+  const median = heights[Math.floor(heights.length / 2)];
+
+  const chapters = [];
+  for (let i = 0; i < paragraphs.length; i++) {
+    const wordCount = paragraphs[i].join(' ').split(/\s+/).filter(Boolean).length;
+    const isBig = meta[i].height > median * 1.25;
+    const isShort = paragraphs[i].length <= 2 && wordCount <= 12;
+    if (isBig && isShort) chapters.push({ title: paragraphs[i].join(' ').trim(), paraIndex: i });
+  }
+  // Too many "headings" (e.g. a document that's bold/large throughout) means
+  // the signal isn't reliable — a real chapter list is usually a small
+  // fraction of the paragraph count.
+  if (chapters.length > 60 || chapters.length > paragraphs.length * 0.15) return [];
+  return chapters.length >= 2 ? chapters : [];
+}
+
+// Resolve the PDF's embedded outline (bookmarks) to page numbers while the
+// document is still open — getPageIndex/getDestination need a live doc.
+// Returns [] if the PDF has no outline, or none of its entries resolve.
+async function resolveOutline(doc) {
+  let outline;
+  try {
+    outline = await doc.getOutline();
+  } catch {
+    return [];
+  }
+  if (!outline || !outline.length) return [];
+
+  // Some PDFs wrap the whole real outline under one root node (e.g. a single
+  // "Contents" bookmark containing every chapter as a child) — descend into
+  // it so the real chapters are what gets flattened below.
+  let items = outline;
+  if (items.length === 1 && items[0].items?.length) items = items[0].items;
+
+  const flat = [];
+  const walk = (list) => {
+    for (const it of list) {
+      flat.push(it);
+      if (it.items?.length) walk(it.items);
+    }
+  };
+  walk(items);
+
+  const entries = [];
+  for (const item of flat) {
+    const title = (item.title || '').trim();
+    if (!title) continue;
+    const pageIndex = await resolveDestPage(doc, item.dest);
+    if (pageIndex != null) entries.push({ title, pageIndex });
+  }
+  return entries;
+}
+
+async function resolveDestPage(doc, dest) {
+  try {
+    const explicit = typeof dest === 'string' ? await doc.getDestination(dest) : dest;
+    if (!Array.isArray(explicit) || !explicit[0]) return null;
+    return await doc.getPageIndex(explicit[0]);
+  } catch {
+    return null;
+  }
+}
+
+// Map resolved outline entries (by PDF page number) onto paragraph indices,
+// using each paragraph's starting page. Requires at least 2 chapters to be
+// worth showing — a single entry (or none) isn't a useful chapter list.
+function mapOutlineToParagraphs(entries, pageStarts) {
+  const chapters = [];
+  const seen = new Set();
+  for (const { title, pageIndex } of entries.slice().sort((a, b) => a.pageIndex - b.pageIndex)) {
+    let paraIndex = pageStarts.findIndex((p) => p >= pageIndex);
+    if (paraIndex === -1) paraIndex = pageStarts.length - 1;
+    if (seen.has(paraIndex)) continue;
+    seen.add(paraIndex);
+    chapters.push({ title, paraIndex });
+  }
+  return chapters.length >= 2 ? chapters : [];
 }
 
 export function splitSentences(text) {

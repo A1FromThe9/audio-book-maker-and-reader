@@ -139,7 +139,7 @@ async function handleFile(file) {
   );
   document.body.append(overlay);
   try {
-    const { title, paragraphs } = await extractPdf(file, (p, n) => {
+    const { title, paragraphs, chapters } = await extractPdf(file, (p, n) => {
       status.textContent = `Reading page ${p} of ${n}…`;
     });
     const flat = paragraphs.flat();
@@ -149,6 +149,7 @@ async function handleFile(file) {
       addedAt: Date.now(),
       numSentences: flat.length,
       numWords: flat.join(' ').split(/\s+/).filter(Boolean).length,
+      chapters,
       progress: { sentenceIndex: 0, updatedAt: Date.now() },
     };
     await store.addBook(meta, paragraphs, file);
@@ -176,8 +177,10 @@ async function renderReader(id) {
   // --- book content: one span per sentence ---
   const flat = [];
   const sentenceEls = [];
+  const paraStartFlatIndex = new Array(paragraphs.length);
   const content = el('article', { class: 'book-text' });
-  for (const para of paragraphs) {
+  paragraphs.forEach((para, paraIdx) => {
+    paraStartFlatIndex[paraIdx] = flat.length;
     const p = el('p', { class: 'para' });
     for (const s of para) {
       const idx = flat.length;
@@ -187,6 +190,19 @@ async function renderReader(id) {
       sentenceEls.push(span);
     }
     content.append(p);
+  });
+
+  // Chapters (if any were detected) resolved from paragraph index to flat
+  // sentence index, so they use the same navigation primitive as tap-to-jump.
+  const chapters = (meta.chapters || []).map((c) => ({
+    title: c.title,
+    flatIndex: paraStartFlatIndex[c.paraIndex] ?? 0,
+  }));
+  function chapterIndexForSentence(i) {
+    for (let c = chapters.length - 1; c >= 0; c--) {
+      if (chapters[c].flatIndex <= i) return c;
+    }
+    return -1;
   }
 
   // Prefix sums of word counts, so "time left" from any sentence is a lookup,
@@ -238,6 +254,7 @@ async function renderReader(id) {
     if (follow) scrollToSpan(span);
     progressFill.style.width = `${flat.length > 1 ? (i / (flat.length - 1)) * 100 : 100}%`;
     updateTimeLeft(i);
+    if (chapters.length) chapterLabel.textContent = chapters[Math.max(0, chapterIndexForSentence(i))]?.title || '';
   }
 
   function highlightWord(i, charIndex, charLength) {
@@ -295,13 +312,61 @@ async function renderReader(id) {
   });
 
   // --- top bar ---
+  const chapterLabel = el('div', { class: 'reader-chapter' }, '');
+  const chaptersOverlay = chapters.length ? buildChaptersOverlay() : null;
+  onCleanup(() => chaptersOverlay?.remove());
   const top = el('header', { class: 'reader-top' },
     el('button', {
       class: 'icon-btn', 'aria-label': 'Back to library', html: icon('back', 22),
       onclick: () => { location.hash = '#/'; },
     }),
-    el('div', { class: 'reader-title' }, meta.title),
+    el('div', { class: 'reader-titles' },
+      el('div', { class: 'reader-title' }, meta.title),
+      chapters.length ? chapterLabel : null,
+    ),
+    chapters.length
+      ? el('button', {
+          class: 'icon-btn', 'aria-label': 'Chapters', html: icon('list', 22),
+          onclick: () => document.body.append(chaptersOverlay),
+        })
+      : null,
   );
+
+  function buildChaptersOverlay() {
+    const rows = el('div', { class: 'book-list' });
+    chapters.forEach((c, idx) => {
+      const nextFlat = idx + 1 < chapters.length ? chapters[idx + 1].flatIndex : flat.length;
+      const words = wordsBefore[nextFlat] !== undefined
+        ? wordsBefore[nextFlat] - wordsBefore[c.flatIndex]
+        : totalWords - wordsBefore[c.flatIndex];
+      rows.append(
+        el('button', {
+          class: 'book-card chapter-row',
+          onclick: () => {
+            follow = true;
+            followChip.classList.add('hidden');
+            engine.seek(c.flatIndex);
+            overlay.remove();
+          },
+        },
+          el('div', { class: 'book-meta' },
+            el('div', { class: 'book-title' }, c.title),
+            el('div', { class: 'book-sub' }, formatDuration(words / WPM)),
+          ),
+        ),
+      );
+    });
+    const overlay = el('div', { class: 'overlay chapters-overlay', onclick: (e) => { if (e.target === overlay) overlay.remove(); } },
+      el('div', { class: 'overlay-card chapters-card' },
+        el('div', { class: 'chapters-head' },
+          el('h2', {}, 'Chapters'),
+          el('button', { class: 'icon-btn', 'aria-label': 'Close', html: icon('close', 20), onclick: () => overlay.remove() }),
+        ),
+        rows,
+      ),
+    );
+    return overlay;
+  }
 
   // --- player bar ---
   const progressFill = el('div', { class: 'player-bar-fill' });
