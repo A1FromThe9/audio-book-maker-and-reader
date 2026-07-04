@@ -1,0 +1,14 @@
+{
+  "name": "Audiobook Reader",
+  "short_name": "Audiobook",
+  "description": "Turn any PDF into a read-along audiobook. Text is extracted and spoken on your device, with the words highlighted in sync.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0c0b09",
+  "theme_color": "#0c0b09",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
