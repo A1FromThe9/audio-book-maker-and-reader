@@ -6,7 +6,8 @@ Turn any PDF into a read-along audiobook — installable as a home-screen app on
 - **Listen** with your device's built-in text-to-speech voices
 - **Follow along**: the current sentence is highlighted and the page auto-scrolls in sync with the audio (word-level highlighting too, where the platform supports it)
 - **Tap any sentence** to jump the audio there
-- **Speed & voice controls** (0.75×–2×, any installed voice)
+- **Speed & voice controls** (0.75×–2×), voice list limited to real English narration voices — novelty voices (Jester, Zarvox, etc.) and old low-fidelity ones are filtered out
+- **Time remaining** for the rest of the book, updating live as you read and adjusting to your chosen speed
 - **Library with resume**: books and your reading position are saved on your device, so you always pick up where you left off
 - Works fully offline, no accounts, no server
 

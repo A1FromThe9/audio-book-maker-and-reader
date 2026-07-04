@@ -27,6 +27,32 @@ export function loadVoices(timeoutMs = 2000) {
   });
 }
 
+// Novelty/sound-effect voices (Apple's "Novelty" voice category — Albert,
+// Bad News, Bahh, Bells, Boing, Bubbles, Cellos, Deranged, Good News,
+// Hysterical, Jester, Organ, Pipe Organ, Trinoids, Whisper, Wobble, Zarvox)
+// plus old low-fidelity default voices (Fred, Ralph, Kathy, Junior, Princess)
+// that ship alongside the good ones on macOS/iOS. None of these are
+// pleasant for long-form narration, so they're filtered out of the picker.
+const EXCLUDED_VOICE_NAMES = new Set([
+  'albert', 'bad news', 'bahh', 'bells', 'boing', 'bubbles', 'cellos',
+  'deranged', 'good news', 'hysterical', 'jester', 'organ', 'pipe organ',
+  'trinoids', 'whisper', 'wobble', 'zarvox',
+  'fred', 'ralph', 'kathy', 'junior', 'princess',
+]);
+
+export function isNarrationVoice(voice) {
+  if (!voice.lang || !voice.lang.toLowerCase().startsWith('en')) return false;
+  const base = voice.name.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase();
+  return !EXCLUDED_VOICE_NAMES.has(base);
+}
+
+// English narration voices only, with the low-quality/novelty ones removed;
+// falls back to the full list if a device happens to have nothing else.
+export function pickNarrationVoices(all) {
+  const filtered = all.filter(isNarrationVoice);
+  return filtered.length ? filtered : all;
+}
+
 export class SpeechEngine {
   constructor({ onSentence, onWord, onState, onFinish } = {}) {
     this.sentences = [];

@@ -1,12 +1,26 @@
 import * as store from './store.js';
 import { extractPdf } from './extract.js';
-import { SpeechEngine, ttsSupported, loadVoices } from './tts.js';
+import { SpeechEngine, ttsSupported, loadVoices, pickNarrationVoices } from './tts.js';
 import { icon } from './icons.js';
 
 const view = document.getElementById('view');
 const fileInput = document.getElementById('file-input');
 
 const RATES = [0.75, 1, 1.25, 1.5, 1.75, 2];
+const WPM = 155; // rough spoken-word pace at 1x, used for all duration estimates
+
+function formatDuration(mins) {
+  const m = Math.max(1, Math.round(mins));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h} h ${r} min` : `${h} h`;
+}
+
+function formatTimeLeft(mins) {
+  if (mins < 1) return 'Less than a minute left';
+  return `~${formatDuration(mins)} left`;
+}
 
 const settings = {
   get rate() { return parseFloat(localStorage.getItem('abr-rate')) || 1; },
@@ -83,8 +97,7 @@ async function renderLibrary() {
     const pct = b.numSentences > 1
       ? Math.round(((b.progress?.sentenceIndex || 0) / (b.numSentences - 1)) * 100)
       : 0;
-    const mins = Math.max(1, Math.round((b.numWords || 0) / 160));
-    const dur = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
+    const dur = formatDuration((b.numWords || 0) / WPM);
     list.append(
       el('div', { class: 'book-card', onclick: () => { location.hash = `#/book/${encodeURIComponent(b.id)}`; } },
         el('div', { class: 'book-cover', html: icon('book', 22) }),
@@ -176,6 +189,20 @@ async function renderReader(id) {
     content.append(p);
   }
 
+  // Prefix sums of word counts, so "time left" from any sentence is a lookup,
+  // not a re-scan. Granularity is per-sentence, not per-word.
+  const wordsBefore = new Array(flat.length);
+  let totalWords = 0;
+  for (let i = 0; i < flat.length; i++) {
+    wordsBefore[i] = totalWords;
+    totalWords += flat[i].split(/\s+/).filter(Boolean).length;
+  }
+  function updateTimeLeft(i) {
+    const remaining = totalWords - wordsBefore[i];
+    timeLeftEl.textContent = formatTimeLeft(remaining / (WPM * engine.rate));
+    timeLeftEl.title = `Sentence ${i + 1} of ${flat.length}`;
+  }
+
   // --- speech engine + sync ---
   let follow = true;
   let saveTimer = 0;
@@ -210,7 +237,7 @@ async function renderReader(id) {
     span.classList.add('active');
     if (follow) scrollToSpan(span);
     progressFill.style.width = `${flat.length > 1 ? (i / (flat.length - 1)) * 100 : 100}%`;
-    progressText.textContent = `${i + 1} / ${flat.length}`;
+    updateTimeLeft(i);
   }
 
   function highlightWord(i, charIndex, charLength) {
@@ -278,7 +305,7 @@ async function renderReader(id) {
 
   // --- player bar ---
   const progressFill = el('div', { class: 'player-bar-fill' });
-  const progressText = el('span', { class: 'player-count' }, '');
+  const timeLeftEl = el('span', { class: 'player-count' }, '');
   const playBtn = el('button', {
     class: 'play-btn', 'aria-label': 'Play', html: icon('play', 30),
     onclick: () => engine.toggle(),
@@ -290,6 +317,7 @@ async function renderReader(id) {
       engine.setRate(next);
       settings.rate = next;
       rateBtn.textContent = `${next}×`;
+      updateTimeLeft(engine.index);
     },
   }, `${engine.rate}×`);
   const voiceSelect = el('select', {
@@ -309,19 +337,18 @@ async function renderReader(id) {
         playBtn,
         el('button', { class: 'icon-btn', 'aria-label': 'Next sentence', html: icon('next', 22), onclick: () => engine.next() }),
       ),
-      el('div', { class: 'player-side right' }, progressText),
+      el('div', { class: 'player-side right' }, timeLeftEl),
     ),
     el('div', { class: 'player-voice' }, voiceSelect),
   );
 
   view.append(top, content, followChip, player);
 
-  // --- voices ---
+  // --- voices: English narration voices only, novelty/legacy ones excluded ---
   let voices = [];
   if (ttsSupported()) {
-    voices = (await loadVoices()).slice().sort((a, b) => {
-      const lang = (navigator.language || 'en').slice(0, 2);
-      const score = (v) => (v.lang?.slice(0, 2) === lang ? 0 : 1) + (v.localService ? 0 : 0.5);
+    voices = pickNarrationVoices(await loadVoices()).slice().sort((a, b) => {
+      const score = (v) => (v.lang?.toLowerCase() === 'en-us' ? 0 : 1) + (v.localService ? 0 : 0.5);
       return score(a) - score(b) || a.name.localeCompare(b.name);
     });
   }
